@@ -1,0 +1,10 @@
+langchain-google-genai
+langchain-chroma
+chromadb
+python-dotenv
+langchain
+langchain-community
+pypdf
+ddgs
+rank-bm25
+streamlit

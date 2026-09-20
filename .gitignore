@@ -1,0 +1,25 @@
+# Python Virtual Environment
+.venv/
+env/
+venv/
+ENV/
+
+# Sensitive Environment Variables (API Keys)
+.env
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Local Vector Database & Persistent Storage
+chroma_db/
+*.db
+*.sqlite3
+
+# IDE / OS specific files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
