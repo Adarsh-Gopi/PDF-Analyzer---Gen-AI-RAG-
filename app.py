@@ -161,11 +161,23 @@ st.markdown("""
 
 
 # --------------------------------------------------
-# Environment & State
+# Environment & Secure API Key Resolution
 # --------------------------------------------------
 
 load_dotenv()
-default_api_key = os.getenv("GOOGLE_API_KEY", "")
+
+# Securely check for server-side key (from .env or Streamlit Secrets) without exposing it
+server_key = os.getenv("GOOGLE_API_KEY", "")
+try:
+    if not server_key and "GOOGLE_API_KEY" in st.secrets:
+        server_key = st.secrets["GOOGLE_API_KEY"]
+except Exception:
+    pass
+
+
+# --------------------------------------------------
+# Session State Initialization
+# --------------------------------------------------
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -184,6 +196,25 @@ if "active_doc_name" not in st.session_state:
 
 if "prefill_query" not in st.session_state:
     st.session_state.prefill_query = None
+
+if "user_custom_key" not in st.session_state:
+    st.session_state.user_custom_key = ""
+
+if "selected_model" not in st.session_state:
+    st.session_state.selected_model = "gemini-3.7-flash"
+
+if "temperature" not in st.session_state:
+    st.session_state.temperature = 0.2
+
+if "top_k_chunks" not in st.session_state:
+    st.session_state.top_k_chunks = 4
+
+if "enable_web_fallback" not in st.session_state:
+    st.session_state.enable_web_fallback = True
+
+
+# Resolve the active API key (Custom override -> Server key)
+active_api_key = st.session_state.user_custom_key.strip() if st.session_state.user_custom_key.strip() else server_key
 
 
 # --------------------------------------------------
@@ -287,7 +318,7 @@ def process_pdf_file(file_path: str, api_key: str, doc_label: str):
 
 
 # --------------------------------------------------
-# Sidebar: PDF Analyzer Controls
+# Sidebar: Knowledge Base & Settings Modal
 # --------------------------------------------------
 
 with st.sidebar:
@@ -320,14 +351,14 @@ with st.sidebar:
                     tmp_file.write(uploaded_file.getvalue())
                     tmp_path = tmp_file.name
 
-                pages, chunks = process_pdf_file(tmp_path, default_api_key, uploaded_file.name)
+                pages, chunks = process_pdf_file(tmp_path, active_api_key, uploaded_file.name)
                 os.unlink(tmp_path)
                 st.toast(f"✅ Indexed {pages} pages ({chunks} chunks)!", icon="📄")
 
     if os.path.exists("paper.pdf"):
         if st.button("📂 Load Local 'paper.pdf'", use_container_width=True):
             with st.spinner("Indexing paper.pdf..."):
-                pages, chunks = process_pdf_file("paper.pdf", default_api_key, "paper.pdf")
+                pages, chunks = process_pdf_file("paper.pdf", active_api_key, "paper.pdf")
                 st.toast(f"✅ Loaded paper.pdf ({chunks} chunks)!", icon="📄")
 
     if st.session_state.active_doc_name:
@@ -335,30 +366,71 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Settings
-    st.markdown("<div style='font-size: 0.85rem; font-weight: 600; color: #9CA3AF; margin-bottom: 8px;'>SETTINGS</div>", unsafe_allow_html=True)
+    # Settings Popover (Hidden & Secure)
+    with st.popover("⚙️ Settings & Configuration", use_container_width=True):
+        st.markdown("### ⚙️ System Settings")
 
-    user_api_key = st.text_input(
-        "Google Gemini API Key",
-        value=default_api_key,
-        type="password",
-        help="Loaded automatically from .env."
-    )
+        tab_api, tab_model, tab_rag = st.tabs(["🔑 API & Security", "🧠 Model Settings", "🔍 RAG & Search"])
 
-    selected_model = st.selectbox(
-        "Model",
-        options=["gemini-3.7-flash", "gemini-1.5-flash", "gemini-1.5-pro"],
-        index=0
-    )
+        with tab_api:
+            st.markdown("#### API Authentication")
+            
+            # Show API status without revealing the secret
+            if active_api_key:
+                st.success("🔒 **Status**: API Key Active & Verified", icon="✅")
+            else:
+                st.warning("⚠️ **Status**: No API Key Detected. Running in Offline/Fallback Mode.")
 
-    # Status Badges
+            custom_key_input = st.text_input(
+                "Override API Key",
+                type="password",
+                value=st.session_state.user_custom_key,
+                placeholder="Enter custom Gemini key (or leave empty to use server default)...",
+                help="Your key is never exposed or logged. It overrides the default environment key for this session."
+            )
+            if custom_key_input != st.session_state.user_custom_key:
+                st.session_state.user_custom_key = custom_key_input
+                st.rerun()
+
+        with tab_model:
+            st.markdown("#### LLM Preferences")
+            st.session_state.selected_model = st.selectbox(
+                "Gemini Model",
+                options=["gemini-3.7-flash", "gemini-1.5-flash", "gemini-1.5-pro"],
+                index=["gemini-3.7-flash", "gemini-1.5-flash", "gemini-1.5-pro"].index(st.session_state.selected_model)
+            )
+            st.session_state.temperature = st.slider(
+                "Creativity / Temperature",
+                min_value=0.0,
+                max_value=1.0,
+                value=st.session_state.temperature,
+                step=0.05,
+                help="Lower values produce more deterministic, factual answers."
+            )
+
+        with tab_rag:
+            st.markdown("#### Retrieval & Fallback Controls")
+            st.session_state.top_k_chunks = st.slider(
+                "Top-K Retrieved Context Chunks",
+                min_value=2,
+                max_value=8,
+                value=st.session_state.top_k_chunks,
+                step=1
+            )
+            st.session_state.enable_web_fallback = st.toggle(
+                "Enable DuckDuckGo Live Web Search Fallback",
+                value=st.session_state.enable_web_fallback,
+                help="When document context lacks the answer, automatically queries the live web."
+            )
+
+    # Pipeline Status Indicators
     st.markdown("<div style='font-size: 0.85rem; font-weight: 600; color: #9CA3AF; margin-top: 15px; margin-bottom: 8px;'>PIPELINE STATUS</div>", unsafe_allow_html=True)
-    st.markdown("""
+    st.markdown(f"""
     <div style="font-size: 0.82rem; line-height: 1.8; color: #D1D5DB;">
-        • <span style="color: #38bdf8;">ChromaDB Vector Search</span>: Active<br/>
+        • <span style="color: #38bdf8;">ChromaDB Vector Search</span>: {'Active' if st.session_state.vector_db else 'Standby'}<br/>
         • <span style="color: #c084fc;">Local BM25 Search</span>: Active (Offline)<br/>
-        • <span style="color: #fbbf24;">DuckDuckGo Web Search</span>: Active<br/>
-        • <span style="color: #34d399;">Gemini 3.7 LLM</span>: Ready
+        • <span style="color: #fbbf24;">DuckDuckGo Web Search</span>: {'Active' if st.session_state.enable_web_fallback else 'Disabled'}<br/>
+        • <span style="color: #34d399;">Gemini Model</span>: `{st.session_state.selected_model}`
     </div>
     """, unsafe_allow_html=True)
 
@@ -368,11 +440,12 @@ with st.sidebar:
 # --------------------------------------------------
 
 llm = None
-if user_api_key:
+if active_api_key:
     try:
         llm = ChatGoogleGenerativeAI(
-            model=selected_model,
-            google_api_key=user_api_key
+            model=st.session_state.selected_model,
+            google_api_key=active_api_key,
+            temperature=st.session_state.temperature
         )
     except Exception as e:
         st.error(f"Error initializing LLM: {e}")
@@ -452,7 +525,7 @@ if active_query:
                 try:
                     retriever = st.session_state.vector_db.as_retriever(
                         search_type="mmr",
-                        search_kwargs={"k": 4, "fetch_k": 10}
+                        search_kwargs={"k": st.session_state.top_k_chunks, "fetch_k": st.session_state.top_k_chunks * 2}
                     )
                     retrieved_docs = retriever.invoke(active_query)
                     if retrieved_docs:
@@ -461,7 +534,7 @@ if active_query:
                     pass
 
             if not retrieved_docs and st.session_state.bm25_index:
-                retrieved_docs = st.session_state.bm25_index.search(active_query, top_k=4)
+                retrieved_docs = st.session_state.bm25_index.search(active_query, top_k=st.session_state.top_k_chunks)
                 if retrieved_docs:
                     retrieval_source = "Local BM25 (Keyword Search)"
 
@@ -508,8 +581,8 @@ User Question:
                     final_answer = "\n\n".join(passages)
                     answered_from_pdf = True
 
-            # Phase 3: Web Search Fallback (if not in PDF)
-            if not answered_from_pdf:
+            # Phase 3: Web Search Fallback (if not in PDF and enabled)
+            if not answered_from_pdf and st.session_state.enable_web_fallback:
                 web_results = search_web_duckduckgo(active_query, max_results=4)
 
                 if web_results:
@@ -545,6 +618,9 @@ User Question:
                 else:
                     badge_html = '<span class="source-badge badge-offline-mode">❌ Not Found</span>'
                     final_answer = "Could not find relevant information in the PDF or on the web."
+            elif not answered_from_pdf and not st.session_state.enable_web_fallback:
+                badge_html = '<span class="source-badge badge-offline-mode">📄 PDF Only</span>'
+                final_answer = "I could not find the answer in the uploaded PDF document."
 
             # Render response
             if badge_html:
