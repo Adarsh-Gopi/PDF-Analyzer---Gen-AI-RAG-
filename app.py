@@ -201,7 +201,7 @@ if "user_custom_key" not in st.session_state:
     st.session_state.user_custom_key = ""
 
 if "selected_model" not in st.session_state:
-    st.session_state.selected_model = "gemini-3.7-flash"
+    st.session_state.selected_model = "gemini-3.6-flash"
 
 if "temperature" not in st.session_state:
     st.session_state.temperature = 0.2
@@ -406,10 +406,12 @@ with st.sidebar:
 
         with tab_model:
             st.markdown("#### LLM Preferences")
+            model_options = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.7-flash"]
+            default_index = model_options.index(st.session_state.selected_model) if st.session_state.selected_model in model_options else 0
             st.session_state.selected_model = st.selectbox(
                 "Gemini Model",
-                options=["gemini-3.7-flash", "gemini-1.5-flash", "gemini-1.5-pro"],
-                index=["gemini-3.7-flash", "gemini-1.5-flash", "gemini-1.5-pro"].index(st.session_state.selected_model)
+                options=model_options,
+                index=default_index
             )
             st.session_state.temperature = st.slider(
                 "Creativity / Temperature",
@@ -588,14 +590,14 @@ User Question:
                         context_lines.append(f"**Chunk {i} (Page {p})**:\n> {doc.page_content.strip()}")
                     context_details = "\n\n".join(context_lines)
 
-                elif not llm and retrieved_docs:
-                    # Offline fallback
-                    badge_html = '<span class="source-badge badge-offline-mode">⚡ Source: PDF Extracted Passages (Offline Mode)</span>'
+                elif not llm_response and retrieved_docs:
+                    # Fallback when Gemini API encounters rate-limit / offline / network error
+                    badge_html = '<span class="source-badge badge-offline-mode">⚡ Source: PDF Extracted Passages (Offline Fallback)</span>'
                     passages = []
-                    for i, doc in enumerate(retrieved_docs[:2], 1):
+                    for i, doc in enumerate(retrieved_docs[:3], 1):
                         p = doc.metadata.get("page", "N/A")
                         passages.append(f"**Passage {i} (Page {p})**:\n{doc.page_content.strip()}")
-                    final_answer = "\n\n".join(passages)
+                    final_answer = "⚠️ *Gemini API temporarily reached its request limit or is offline. Here are the most relevant extracted passages directly from your document:*\n\n" + "\n\n---\n\n".join(passages)
                     answered_from_pdf = True
 
             # Phase 3: Web Search Fallback (if not in PDF and enabled)
