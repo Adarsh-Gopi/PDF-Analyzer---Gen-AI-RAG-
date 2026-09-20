@@ -164,7 +164,7 @@ st.markdown("""
 # Environment & Secure API Key Resolution
 # --------------------------------------------------
 
-load_dotenv()
+load_dotenv(override=True)
 
 # Securely check for server-side key (from .env or Streamlit Secrets) without exposing it
 server_key = os.getenv("GOOGLE_API_KEY", "")
@@ -282,7 +282,7 @@ def try_gemini_invoke(llm: ChatGoogleGenerativeAI, prompt: str) -> str | None:
         else:
             return str(response.content).strip()
     except Exception as e:
-        st.caption(f"Gemini API Notice: {e}")
+        st.warning(f"⚠️ Gemini API Notice: {e}")
         return None
 
 
@@ -315,6 +315,18 @@ def process_pdf_file(file_path: str, api_key: str, doc_label: str):
         st.session_state.vector_db = None
 
     return len(documents), len(chunks)
+
+
+# --------------------------------------------------
+# Auto-Load PDF on First Startup
+# --------------------------------------------------
+
+if st.session_state.active_doc_name is None:
+    if os.path.exists("paper.pdf"):
+        try:
+            process_pdf_file("paper.pdf", active_api_key, "paper.pdf")
+        except Exception:
+            pass
 
 
 # --------------------------------------------------
@@ -356,7 +368,7 @@ with st.sidebar:
                 st.toast(f"✅ Indexed {pages} pages ({chunks} chunks)!", icon="📄")
 
     if os.path.exists("paper.pdf"):
-        if st.button("📂 Load Local 'paper.pdf'", use_container_width=True):
+        if st.button("📂 Reload 'paper.pdf'", use_container_width=True):
             with st.spinner("Indexing paper.pdf..."):
                 pages, chunks = process_pdf_file("paper.pdf", active_api_key, "paper.pdf")
                 st.toast(f"✅ Loaded paper.pdf ({chunks} chunks)!", icon="📄")
@@ -428,7 +440,7 @@ with st.sidebar:
     st.markdown(f"""
     <div style="font-size: 0.82rem; line-height: 1.8; color: #D1D5DB;">
         • <span style="color: #38bdf8;">ChromaDB Vector Search</span>: {'Active' if st.session_state.vector_db else 'Standby'}<br/>
-        • <span style="color: #c084fc;">Local BM25 Search</span>: Active (Offline)<br/>
+        • <span style="color: #c084fc;">Local BM25 Search</span>: {'Active' if st.session_state.bm25_index else 'Standby'}<br/>
         • <span style="color: #fbbf24;">DuckDuckGo Web Search</span>: {'Active' if st.session_state.enable_web_fallback else 'Disabled'}<br/>
         • <span style="color: #34d399;">Gemini Model</span>: `{st.session_state.selected_model}`
     </div>
@@ -538,6 +550,11 @@ if active_query:
                 if retrieved_docs:
                     retrieval_source = "Local BM25 (Keyword Search)"
 
+            # If question is a general document query like "what is this document/paper/pdf about?", include top chunks if no specific match
+            if not retrieved_docs and st.session_state.chunks:
+                retrieved_docs = st.session_state.chunks[:st.session_state.top_k_chunks]
+                retrieval_source = "Document Beginning Chunks"
+
             pdf_context = "\n\n".join(doc.page_content for doc in retrieved_docs)
             answered_from_pdf = False
 
@@ -545,7 +562,7 @@ if active_query:
             if pdf_context:
                 pdf_prompt = f"""
 You are an expert AI document assistant.
-Answer the user's question clearly and accurately using ONLY the information provided in the context below.
+Answer the user's question clearly and accurately using the context provided below from the uploaded document.
 If the context does NOT contain enough information to answer the question, output EXACTLY:
 "NOT_IN_PDF"
 
@@ -561,7 +578,7 @@ User Question:
                     if "Vector" in retrieval_source:
                         badge_html = '<span class="source-badge badge-pdf-vector">📄 Source: PDF (ChromaDB Vector)</span>'
                     else:
-                        badge_html = '<span class="source-badge badge-pdf-bm25">📄 Source: PDF (Local BM25 Search)</span>'
+                        badge_html = '<span class="source-badge badge-pdf-bm25">📄 Source: PDF (Local Search)</span>'
                     final_answer = llm_response
                     answered_from_pdf = True
 
