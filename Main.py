@@ -1,6 +1,9 @@
 import os
 import re
 import sys
+import urllib.parse
+import requests
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 # Reconfigure stdout/stderr for utf-8 if supported on Windows
@@ -15,6 +18,7 @@ from langchain_google_genai import (
 )
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader
+from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from rank_bm25 import BM25Okapi
 try:
@@ -58,10 +62,56 @@ class LocalBM25Index:
         if not tokenized_query:
             return []
         scores = self.bm25.get_scores(tokenized_query)
-        # Sort and select top_k
         top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
-        # Only return chunks with non-zero relevance score
         return [self.chunks[i] for i in top_indices if scores[i] > 0]
+
+
+def extract_website_content(url: str) -> Document:
+    """Fetches and cleans readable text from any website URL."""
+    url = url.strip()
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "https://" + url
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5"
+    }
+
+    response = requests.get(url, headers=headers, timeout=15)
+    response.raise_for_status()
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    for tag in soup(["script", "style", "nav", "footer", "header", "noscript", "aside", "svg", "form", "button", "iframe"]):
+        tag.decompose()
+
+    title = ""
+    if soup.title and soup.title.string:
+        title = soup.title.string.strip()
+    elif soup.find("h1"):
+        title = soup.find("h1").get_text(strip=True)
+    if not title:
+        parsed = urllib.parse.urlparse(url)
+        title = parsed.netloc + parsed.path
+
+    main_node = (
+        soup.find("main")
+        or soup.find("article")
+        or soup.find("div", {"id": "content"})
+        or soup.find("div", {"id": "main-content"})
+        or soup.find("div", {"class": "content"})
+        or soup.body
+    )
+    raw_text = main_node.get_text(separator="\n", strip=True) if main_node else soup.get_text(separator="\n", strip=True)
+    cleaned_text = re.sub(r"\n{3,}", "\n\n", raw_text).strip()
+
+    if not cleaned_text or len(cleaned_text) < 40:
+        raise ValueError("Could not extract readable text content from the URL.")
+
+    return Document(
+        page_content=cleaned_text,
+        metadata={"source": url, "title": title, "type": "url", "page": 1}
+    )
 
 
 def search_web_duckduckgo(query: str, max_results: int = 4) -> list[dict]:
@@ -118,7 +168,7 @@ def try_gemini_invoke(llm: ChatGoogleGenerativeAI, prompt: str) -> str | None:
 
 def main():
     print("=" * 60)
-    print("      Resilient RAG Assistant (PDF + Web + Local Search)")
+    print("   Resilient RAG Assistant (PDF + Web Link + Live Search)")
     print("=" * 60)
 
     # Initialize Gemini models if API key exists
@@ -144,27 +194,50 @@ def main():
     all_chunks = []
     vector_db = None
     bm25_index = None
+    source_label = "Document"
+    source_type = "pdf"
 
-    # Step 1: Ingest or Load PDF
-    pdf_path = input("\nEnter path to PDF file (or press Enter to use existing / web): ").strip().strip('"').strip("'")
+    # Step 1: Ingest or Load PDF or Web URL
+    user_source_input = input("\nEnter path to PDF file OR Website URL (or press Enter to use existing / web): ").strip().strip('"').strip("'")
 
-    if pdf_path:
-        if not os.path.isfile(pdf_path):
-            print(f"[ERROR] File not found at '{pdf_path}'")
-            sys.exit(1)
-        if not pdf_path.lower().endswith(".pdf"):
-            print(f"[ERROR] '{pdf_path}' is not a PDF file.")
-            sys.exit(1)
+    if user_source_input:
+        if user_source_input.startswith("http://") or user_source_input.startswith("https://") or ("." in user_source_input and "/" in user_source_input and not os.path.exists(user_source_input)):
+            # Process Web URL
+            source_type = "url"
+            print(f"\n[1/3] Fetching and scraping website: {user_source_input}...")
+            try:
+                web_doc = extract_website_content(user_source_input)
+                source_label = web_doc.metadata.get("title", user_source_input)
+                print(f"      Title: {source_label}")
+                print(f"      Extracted: {len(web_doc.page_content)} characters.")
 
-        print(f"\n[1/3] Loading PDF: {pdf_path}...")
-        loader = PyPDFLoader(pdf_path)
-        documents = loader.load()
-        print(f"      Loaded {len(documents)} page(s).")
+                print("[2/3] Splitting into text chunks...")
+                text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+                all_chunks = text_splitter.split_documents([web_doc])
+                print(f"      Created {len(all_chunks)} text chunks.")
+            except Exception as e:
+                print(f"[ERROR] Failed to scrape website: {e}")
+                sys.exit(1)
+        else:
+            # Process Local PDF
+            source_type = "pdf"
+            if not os.path.isfile(user_source_input):
+                print(f"[ERROR] File not found at '{user_source_input}'")
+                sys.exit(1)
+            if not user_source_input.lower().endswith(".pdf"):
+                print(f"[ERROR] '{user_source_input}' is not a PDF file.")
+                sys.exit(1)
 
-        print("[2/3] Splitting into text chunks...")
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        all_chunks = text_splitter.split_documents(documents)
-        print(f"      Created {len(all_chunks)} text chunks.")
+            print(f"\n[1/3] Loading PDF: {user_source_input}...")
+            loader = PyPDFLoader(user_source_input)
+            documents = loader.load()
+            source_label = os.path.basename(user_source_input)
+            print(f"      Loaded {len(documents)} page(s).")
+
+            print("[2/3] Splitting into text chunks...")
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+            all_chunks = text_splitter.split_documents(documents)
+            print(f"      Created {len(all_chunks)} text chunks.")
 
         # Build local BM25 index (always available offline)
         bm25_index = LocalBM25Index(all_chunks)
@@ -226,7 +299,7 @@ def main():
         retrieval_source = "None"
 
         # --------------------------------------------------
-        # Phase 1: Try Document Retrieval (Vector or BM25)
+        # Phase 1: Try Document / Web Link Retrieval (Vector or BM25)
         # --------------------------------------------------
         if retriever:
             try:
@@ -241,55 +314,56 @@ def main():
             if retrieved_docs:
                 retrieval_source = "Local BM25 (Keyword Search)"
 
-        pdf_context = "\n\n".join(doc.page_content for doc in retrieved_docs)
+        doc_context = "\n\n".join(doc.page_content for doc in retrieved_docs)
 
         # --------------------------------------------------
-        # Phase 2: PDF Question Answering with Gemini
+        # Phase 2: Ingested Knowledge Base Q&A with Gemini
         # --------------------------------------------------
-        answered_from_pdf = False
+        answered_from_doc = False
+        source_name = "Web Page" if source_type == "url" else "PDF Document"
 
-        if pdf_context:
-            pdf_prompt = f"""
-You are a helpful PDF assistant.
+        if doc_context:
+            doc_prompt = f"""
+You are a helpful AI assistant.
 
-Answer the user's question using the information provided in the context below.
+Answer the user's question clearly using the information provided in the context below from the active {source_name} ("{source_label}").
 If the context does not contain enough information to answer the question, output EXACTLY:
-"NOT_IN_PDF"
+"NOT_IN_SOURCE"
 
 Context:
-{pdf_context}
+{doc_context}
 
 User Question:
 {question}
 """
-            llm_response = try_gemini_invoke(llm, pdf_prompt)
+            llm_response = try_gemini_invoke(llm, doc_prompt)
 
             if llm_response:
-                if "NOT_IN_PDF" not in llm_response:
-                    print(f"\n[Source: PDF ({retrieval_source})]:")
+                if "NOT_IN_SOURCE" not in llm_response and "NOT_IN_PDF" not in llm_response:
+                    print(f"\n[Source: {source_name} ({retrieval_source})]:")
                     print("-" * 60)
                     print(llm_response)
-                    answered_from_pdf = True
+                    answered_from_doc = True
             else:
                 # LLM API is down/quota exceeded -> Offline fallback: Show extracted passages
-                print(f"\n[Source: PDF Extracted Passages (Offline Mode)]:")
+                print(f"\n[Source: {source_name} Extracted Passages (Offline Mode)]:")
                 print("-" * 60)
                 for i, doc in enumerate(retrieved_docs[:2], start=1):
                     page = doc.metadata.get("page", "N/A")
                     print(f"[Match {i} (Page {page})]:")
                     print(doc.page_content.strip()[:400] + "...\n")
-                answered_from_pdf = True
+                answered_from_doc = True
 
         # --------------------------------------------------
-        # Phase 3: Web Search Fallback (if not found in PDF)
+        # Phase 3: Web Search Fallback (if not found in document/url)
         # --------------------------------------------------
-        if not answered_from_pdf:
-            print("\n[INFO: Not found in local PDF. Shifting to live Web Search (DuckDuckGo)...]")
+        if not answered_from_doc:
+            print(f"\n[INFO: Not found in active {source_name.lower()}. Shifting to live Web Search (DuckDuckGo)...]")
             web_results = search_web_duckduckgo(question, max_results=4)
 
             if not web_results:
                 print("\nAnswer:")
-                print("Could not find relevant information in the PDF or on the web.")
+                print(f"Could not find relevant information in the active {source_name.lower()} or on the web.")
                 continue
 
             web_context = format_web_context(web_results)

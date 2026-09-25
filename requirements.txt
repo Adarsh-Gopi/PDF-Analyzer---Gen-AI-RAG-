@@ -8,3 +8,6 @@ pypdf
 ddgs
 rank-bm25
 streamlit
+beautifulsoup4
+requests
+

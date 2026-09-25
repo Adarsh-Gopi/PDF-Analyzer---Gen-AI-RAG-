@@ -1,19 +1,22 @@
-# 📄 PDF Analyzer — Gen AI (RAG)
+# 📄🌐 PDF & Web Analyzer — Gen AI (RAG)
 
-An intelligent document analysis platform powered by **Generative AI** and **Retrieval-Augmented Generation (RAG)** that enables real-time question answering over PDF documents, featuring hybrid vector retrieval, zero-API local keyword search, and automatic live web search fallback.
+An intelligent knowledge analysis platform powered by **Generative AI** and **Retrieval-Augmented Generation (RAG)** that enables real-time question answering over **PDF documents** and **Live Website Links / URLs**, featuring hybrid vector retrieval, zero-API local keyword search, and automatic live web search fallback.
 
 ---
 
 ## 🌟 Key Features
 
 - **🚀 Generative Q&A with Gemini**: Powered by Google's `gemini-3.7-flash` and `gemini-embedding-001`.
-- **📄 Interactive Document Ingestion**: Upload any PDF via drag-and-drop or load existing documents with one click.
+- **📄 Multi-Source Ingestion**:
+  - **PDF Documents**: Upload any PDF via drag-and-drop or load existing documents with one click.
+  - **🌐 Any Website Link / URL**: Paste any web article or documentation URL for automated web scraping, cleaning, chunking, and indexing.
 - **🛡️ Multi-Tiered Fallback Architecture**:
   1. **ChromaDB Vector Search**: Semantic search over text chunks.
   2. **Local BM25 Keyword Search**: Seamless zero-API offline fallback if embedding services are unavailable.
-  3. **Live Web Search (DuckDuckGo)**: Automatically queries the web with citations when information is outside the PDF.
+  3. **Live Web Search (DuckDuckGo)**: Automatically queries the web with citations when information is outside the document/webpage.
   4. **Offline Mode**: Gracefully displays extracted text passages or web snippets if the LLM API is unreachable.
-- **🎨 ChatGPT-Inspired Interface**: Sleek dark-mode aesthetic built with Streamlit, including prompt suggestion cards and context expanders.
+- **🎨 ChatGPT-Inspired Interface**: Sleek dark-mode aesthetic built with Streamlit, including dynamic prompt suggestion cards, dedicated PDF & URL tabs, and context expanders with source badges.
+- **⚡ One-Click Startup Launcher**: Includes `start.bat` / `run.bat` for instant single-click launch on Windows.
 
 ---
 
@@ -24,48 +27,46 @@ An intelligent document analysis platform powered by **Generative AI** and **Ret
 - **Vector Database**: ChromaDB (`langchain-chroma`)
 - **Offline Search**: Rank-BM25 (`rank-bm25`)
 - **Web Search**: DuckDuckGo (`ddgs`)
-- **Document Processing**: PyPDF (`pypdf`, `langchain-community`)
+- **Document & Web Processing**: PyPDF (`pypdf`, `langchain-community`), BeautifulSoup4 (`beautifulsoup4`), Requests (`requests`)
 
 ---
 
 ## 🚀 Quick Start (Local Setup)
 
-### 1. Clone the Repository
-```bash
-git clone https://github.com/Adarsh-Gopi/PDF-Analyzer---Gen-AI-RAG-.git
-cd PDF-Analyzer---Gen-AI-RAG-
-```
+### 1. One-Click Launch (Windows)
+Double-click **`start.bat`** or **`run.bat`** in the project folder to automatically activate your environment and launch the web app in your browser!
 
-### 2. Create and Activate a Virtual Environment
-```bash
-# Windows
-python -m venv .venv
-.\.venv\Scripts\activate
+---
 
-# macOS / Linux
-python3 -m venv .venv
-source .venv/bin/activate
-```
+### 2. Manual Terminal Launch
 
-### 3. Install Dependencies
-```bash
-pip install -r requirements.txt
-```
-
-### 4. Configure API Key
+#### Step A: Configure API Key
 Create a `.env` file in the root directory:
 ```env
 GOOGLE_API_KEY=your_gemini_api_key_here
 ```
 *(You can get a free Gemini API key from [Google AI Studio](https://aistudio.google.com/)).*
 
-### 5. Launch the Web Application
+#### Step B: Activate Environment & Install Dependencies
+```bash
+# Windows
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+
+# macOS / Linux
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+#### Step C: Launch the Web App
 ```bash
 streamlit run app.py
 ```
 Open **`http://localhost:8501`** in your browser.
 
-*(Optional: You can also run the terminal version via `python Main.py`).*
+*(Optional: You can also run the terminal CLI version via `python Main.py` or by double-clicking `start_cli.bat`).*
 
 ---
 
